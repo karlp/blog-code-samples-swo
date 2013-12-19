@@ -1,0 +1,10 @@
+Demonstrates multiple interleaved SWO stimulus outputs
+* Uses the DAC to generate some different shaped waves, and dumps to trace
+* Uses the ADC to sample that wave (XXX: do we need to wire this externally?)
+  and dumps to trace
+* Dumps some timing counts of interrupts to trace
+  ** TODO - would be ideal to get the trace support far enough to turn on
+     automatic timestamping.....
+
+
+
