@@ -1,10 +1,9 @@
 Demonstrates multiple interleaved SWO stimulus outputs
-* Uses the DAC to generate some different shaped waves, and dumps to trace
-* Uses the ADC to sample that wave (XXX: do we need to wire this externally?)
-  and dumps to trace
+* Requires a function generator or some signal source on PA1
+* Runs the adc at 5khz to sample that, and dumps the value to ITM
 * Dumps some timing counts of interrupts to trace
-  ** TODO - would be ideal to get the trace support far enough to turn on
-     automatic timestamping.....
 
-
+TODO:
+* Uses the onboard DAC to generate some waves instead
+* Demonstrate how to get automatic timestamping of trace output (DWT can do this)
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Karl Palsson <karlp@tweak.net.au>
+ * Copyright (C) 2013-2014 Karl Palsson <karlp@tweak.net.au>
  *
  * Insert your choice of BSD 2 clause, Apache 2.0, MIT or ISC licenses here
  */
@@ -20,65 +20,60 @@
 
 #include "discovery_board.h"
 
-#define ARRAY_LENGTH(array) (sizeof((array))/sizeof((array)[0]))
+/* prototype to keep newlib happy */
+int _write(int file, char *ptr, int len);
 
-// This is what we want to hook up to the dac.
-#define DEMO_ADC_CHANNEL 17
+#define ARRAY_LENGTH(array) (sizeof((array))/sizeof((array)[0]))
 
 struct state_t {
 	bool falling;
-	int tickcount;
+	int tick_count;
+	volatile int sample_counter;
 	uint16_t sample_buffer[4];
 };
 
 static struct state_t state;
 
 enum {
-	STIMULUS_PRINTF,
-	STIMULUS_DAC_OUT,
-	STIMULUS_ADC_IN,
-	STIMULUS_TIMING_IRQ_BUTTON,
+	STIMULUS_PRINTF, /* 0x01 */
+	STIMULUS_DAC_OUT, /* 0x02 */
+	STIMULUS_ADC_IN, /* 0x04 */
+	STIMULUS_TIMING_IRQ_BUTTON, /* 0x08 */
+	STIMULUS_TIMING_IRQ_DMA, /* 0x10 */
 };
 
-static void trace_send_blocking8(int stimulus, char c)
-{
+static void trace_send_blocking8(int stimulus, char c) {
 	while (!(ITM_STIM8(stimulus) & ITM_STIM_FIFOREADY))
 		;
 	ITM_STIM8(stimulus) = c;
 }
 
-static void trace_send_blocking16(int stimulus, uint16_t c)
-{
+static void trace_send_blocking16(int stimulus, uint16_t c) {
 	while (!(ITM_STIM16(stimulus) & ITM_STIM_FIFOREADY))
 		;
 	ITM_STIM16(stimulus) = c;
 }
 
-static void trace_send_blocking32(int stimulus, uint32_t c)
-{
+static void trace_send_blocking32(int stimulus, uint32_t c) {
 	while (!(ITM_STIM32(stimulus) & ITM_STIM_FIFOREADY))
 		;
 	ITM_STIM32(stimulus) = c;
 }
 
-
-static void clock_setup(void)
-{
+static void clock_setup(void) {
 	rcc_clock_setup_pll(&clock_config[CLOCK_VRANGE1_HSI_PLL_24MHZ]);
 }
 
-static void setup_buttons_gpios(void)
-{
-	rcc_peripheral_enable_clock(&RCC_AHBENR, RCC_AHBENR_GPIOAEN);
-	rcc_peripheral_enable_clock(&RCC_AHBENR, RCC_AHBENR_GPIOBEN);
-	
+static void setup_buttons_gpios(void) {
+	rcc_periph_clock_enable(RCC_GPIOA);
+	rcc_periph_clock_enable(RCC_GPIOB);
+
 	/* green led for ticking, blue for button feedback */
 	gpio_mode_setup(LED_DISCO_GREEN_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, LED_DISCO_GREEN_PIN);
 	gpio_mode_setup(LED_DISCO_BLUE_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, LED_DISCO_BLUE_PIN);
 }
 
-void BUTTON_DISCO_USER_isr(void)
-{
+void BUTTON_DISCO_USER_isr(void) {
 	uint32_t before = SCS_DWT_CYCCNT;
 	exti_reset_request(BUTTON_DISCO_USER_EXTI);
 	if (state.falling) {
@@ -97,13 +92,27 @@ void BUTTON_DISCO_USER_isr(void)
 	trace_send_blocking32(STIMULUS_TIMING_IRQ_BUTTON, SCS_DWT_CYCCNT - before);
 }
 
+static void process_samples(uint16_t *samps) {
+	trace_send_blocking16(STIMULUS_ADC_IN, samps[0]);
+	/* TODO - demo oversampling here, or something like that... */
+}
+
+void dma1_channel1_isr(void) {
+	uint32_t cyc_before = SCS_DWT_CYCCNT;
+	if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF)) {
+		process_samples(state.sample_buffer);
+		state.sample_counter++;
+		dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
+	}
+	trace_send_blocking32(STIMULUS_TIMING_IRQ_DMA, SCS_DWT_CYCCNT - cyc_before);
+}
+
 /**
  * Set up an ADC sampling trigger at 5KHz
  */
 static
-void setup_adc_trigger(void)
-{
-	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM6EN);
+void setup_adc_trigger(void) {
+	rcc_periph_clock_enable(RCC_TIM6);
 	// Timer to trigger ADC sampling
 	uint32_t timer = TIM6;
 
@@ -113,15 +122,14 @@ void setup_adc_trigger(void)
 	timer_set_master_mode(timer, TIM_CR2_MMS_UPDATE);
 
 	TIM_CNT(timer) = 0;
-        timer_enable_counter(timer);
+	timer_enable_counter(timer);
 }
 
 /*
  * Free running ms timer, no advatange over systick.
  */
-static void setup_button_timer(void)
-{
-	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM7EN);
+static void setup_button_timer(void) {
+	rcc_periph_clock_enable(RCC_TIM7);
 
 	timer_reset(TIM7);
 	// 24Mhz/1000hz - 1
@@ -130,13 +138,12 @@ static void setup_button_timer(void)
 	timer_enable_counter(TIM7);
 }
 
-static void setup_buttons(void)
-{
+static void setup_buttons(void) {
 	/* Timer 7 will time the button presses */
 	setup_button_timer();
 
 	setup_buttons_gpios();
-	
+
 	/* Enable EXTI0 interrupt. */
 	nvic_enable_irq(BUTTON_DISCO_USER_NVIC);
 
@@ -156,8 +163,7 @@ static void setup_buttons(void)
  * @param len
  * @return
  */
-int _write(int file, char *ptr, int len)
-{
+int _write(int file, char *ptr, int len) {
 	int i;
 
 	if (file == STDOUT_FILENO || file == STDERR_FILENO) {
@@ -178,79 +184,87 @@ int _write(int file, char *ptr, int len)
  * FIXME - let it take a dest pointer instead?
  */
 static
-void setup_adc_dma(void)
-{
+void setup_adc_dma(void) {
 	// turn on DMA and start it up!
-        dma_channel_reset(DMA1, DMA_CHANNEL1); // channel1 is adc
-        dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t) state.sample_buffer);
-        dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
-        dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
-        dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t) & ADC_DR(ADC1));
-        dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
-        dma_set_number_of_data(DMA1, DMA_CHANNEL1, ARRAY_LENGTH(state.sample_buffer));
+	dma_channel_reset(DMA1, DMA_CHANNEL1); // channel1 is adc
+	dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t) state.sample_buffer);
+	dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+	dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+	dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t) & ADC_DR(ADC1));
+	dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+	dma_set_number_of_data(DMA1, DMA_CHANNEL1, ARRAY_LENGTH(state.sample_buffer));
 
-        dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
-        dma_enable_transfer_error_interrupt(DMA1, DMA_CHANNEL1);
-        dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+	dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+	dma_enable_transfer_error_interrupt(DMA1, DMA_CHANNEL1);
+	dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
 
-        dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+	dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
 
-        dma_enable_channel(DMA1, DMA_CHANNEL1);
-        nvic_enable_irq(NVIC_DMA1_CHANNEL1_IRQ);
+	dma_enable_channel(DMA1, DMA_CHANNEL1);
+	nvic_enable_irq(NVIC_DMA1_CHANNEL1_IRQ);
 
-        /* Keep on requesting DMA, as long as ADC is running */
-        ADC_CR2(ADC1) |= ADC_CR2_DDS;
-        adc_enable_dma(ADC1);	
+	/* Keep on requesting DMA, as long as ADC is running */
+	ADC_CR2(ADC1) |= ADC_CR2_DDS;
+	adc_enable_dma(ADC1);
 }
 
 static
-void setup_adc(void)
-{
-	rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_ADC1EN);
+void setup_adc(void) {
+	rcc_periph_clock_enable(RCC_ADC1);
 	/* We're going to DMA adc samples continuously */
-	rcc_peripheral_enable_clock(&RCC_AHBENR, RCC_AHBENR_DMA1EN);
-	
-	// Sets _all_ the analog pins on, even if they might be disabled
-	// FIXME - get the port/pin that we want to connect to the dac
-        gpio_mode_setup(DEMO_ADC_PORT, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, DEMO_ADC_PIN);
-	
-	
-        adc_off(ADC1);
-        adc_enable_scan_mode(ADC1);
-	/* Oversample four samples of the same channel */
-        uint8_t sample_map[] = {DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL};
-        adc_set_regular_sequence(ADC1, ARRAY_LENGTH(sample_map), sample_map);
+	rcc_periph_clock_enable(RCC_DMA1);
 
-        // Enable the external trigger source as timer6
-        adc_enable_external_trigger_regular(ADC1, ADC_CR2_EXTSEL_TIM6_TRGO, ADC_CR2_EXTEN_RISING_EDGE);
-        adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_48CYC);
-	
+	/* Just one input for now */
+	gpio_mode_setup(DEMO_ADC_PORT, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, DEMO_ADC_PIN);
+
+	adc_off(ADC1);
+	adc_enable_scan_mode(ADC1);
+	/* Oversample four samples of the same channel */
+	uint8_t sample_map[] = {DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL, DEMO_ADC_CHANNEL};
+	adc_set_regular_sequence(ADC1, ARRAY_LENGTH(sample_map), sample_map);
+
+	// Enable the external trigger source as timer6
+	adc_enable_external_trigger_regular(ADC1, ADC_CR2_EXTSEL_TIM6_TRGO, ADC_CR2_EXTEN_RISING_EDGE);
+	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_48CYC);
+
+	/* Note the datasheet sec 6.3.3, 10uSec for the viref/tempsense (worst case) */
+	adc_set_sample_time(ADC1, ADC_CHANNEL_VREFINT, ADC_SMPR_SMP_192CYC);
+	adc_set_sample_time(ADC1, ADC_CHANNEL_TEMP, ADC_SMPR_SMP_192CYC);
+
+	/* This also enables the vref int channel */
+	adc_enable_temperature_sensor();
+
+	/* Enable the ADC, and wait for it to be ready */
+	adc_power_on(ADC1);
+	while ((ADC_SR(ADC1) & ADC_SR_ADONS) == 0) {
+		;
+	}
+
 	setup_adc_dma();
-	
+
 	/* trigger the adc at a known rate */
 	setup_adc_trigger();
-	
-
 }
 
 static
-void setup_dac(void)
-{
-	
-	rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_DACEN);
+void setup_dac(void) {
+	rcc_periph_clock_enable(RCC_DAC);
 	// FIXME - incomplete
+	/* Eventually, would be nice to generate here, and dump out to the adc... */
 
 }
 
-int main(void)
-{
+int main(void) {
 	clock_setup();
 	printf("hi guys!\n");
 	setup_buttons();
 	setup_adc();
 	setup_dac();
 	while (1) {
-		;
+		if (state.sample_counter % 5000 == 0) {
+			state.tick_count++;
+			printf("Tick: %d\n", state.tick_count);
+		}
 	}
 
 	return 0;

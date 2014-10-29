@@ -23,6 +23,12 @@ extern "C" {
 #define BUTTON_DISCO_USER_EXTI EXTI0
 #define BUTTON_DISCO_USER_isr exti0_isr
 #define BUTTON_DISCO_USER_NVIC NVIC_EXTI0_IRQ
+
+/* This is what we want to hook up to the dac. */
+#define DEMO_ADC_PORT GPIOA
+#define DEMO_ADC_PIN GPIO1
+#define DEMO_ADC_CHANNEL 1
+
 #endif
 
 
