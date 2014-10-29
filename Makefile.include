@@ -60,7 +60,7 @@ OBJS		+= $(BINARY).o
 
 OOCD		?= openocd
 OOCD_INTERFACE	?= flossjtag
-OOCD_BOARD	?= olimex_stm32_h103
+OOCD_BOARD	?= stm32ldiscovery
 # Black magic probe specific variables
 # Set the BMP_PORT to a serial port and then BMP is used for flashing
 BMP_PORT        ?=
@@ -124,14 +124,11 @@ clean:
 ifeq ($(STLINK_PORT),)
 ifeq ($(BMP_PORT),)
 ifeq ($(OOCD_SERIAL),)
-%.flash: %.hex
+%.flash: %.elf
 	@printf "  FLASH   $<\n"
 	@# IMPORTANT: Don't use "resume", only "reset" will work correctly!
-	$(Q)$(OOCD) -f interface/$(OOCD_INTERFACE).cfg \
-		    -f board/$(OOCD_BOARD).cfg \
-		    -c "init" -c "reset init" \
-		    -c "stm32l1x mass_erase 0" \
-		    -c "flash write_image $(*).hex" \
+	$(Q)$(OOCD) -f board/$(OOCD_BOARD).cfg \
+		    -c "program $< verify" \
 		    -c "reset" \
 		    -c "shutdown" $(NULL)
 else
