@@ -95,6 +95,15 @@ void BUTTON_DISCO_USER_isr(void) {
 static void process_samples(uint16_t *samps) {
 	trace_send_blocking16(STIMULUS_ADC_IN, samps[0]);
 	/* TODO - demo oversampling here, or something like that... */
+	/* let's make the processing not take a "fixed" amount of time. */
+	if (samps[0] == samps[1]) {
+		gpio_toggle(LED_DISCO_GREEN_PORT, LED_DISCO_GREEN_PIN);
+	}
+	if (samps[0] % 2 == 0) {
+		for (int i = 0; i < samps[0] / 2; i++) {
+			__asm__("nop");
+		}
+	}
 }
 
 void dma1_channel1_isr(void) {

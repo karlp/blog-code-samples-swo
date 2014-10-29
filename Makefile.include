@@ -40,7 +40,7 @@ endif
 endif
 
 ARCH_FLAGS      = -mthumb -mcpu=cortex-m3 -msoft-float
-CFLAGS		+= -Os -ggdb3 \
+CFLAGS		+= -Os -ggdb3 -std=c99 \
 		   -Wall -Wextra -Wimplicit-function-declaration \
 		   -Wredundant-decls -Wmissing-prototypes -Wstrict-prototypes \
 		   -Wundef -Wshadow \
