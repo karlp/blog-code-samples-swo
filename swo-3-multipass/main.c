@@ -99,8 +99,9 @@ static void process_samples(uint16_t *samps) {
 	if (samps[0] == samps[1]) {
 		gpio_toggle(LED_DISCO_GREEN_PORT, LED_DISCO_GREEN_PIN);
 	}
-	if (samps[0] % 2 == 0) {
-		for (int i = 0; i < samps[0] / 2; i++) {
+	/* Make it take longer based on buttons too */
+	if (gpio_get(LED_DISCO_BLUE_PORT, LED_DISCO_BLUE_PIN)) {
+		for (int i = 0; i < samps[0] / 4; i++) {
 			__asm__("nop");
 		}
 	}
